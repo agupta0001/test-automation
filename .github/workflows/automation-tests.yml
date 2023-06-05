@@ -1,0 +1,81 @@
+name: Cypress Tests
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  ui-tests:
+    if: ${{ github.event.pull_request.draft == false && !contains(github.event.pull_request.labels.*.name, 'dnr') }}
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    container:
+      image: cypress/browsers:node16.17.0-chrome106
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Checkout api-proxy repo
+        uses: actions/checkout@v3
+        with:
+          repository: clearfeed/api-proxy
+          path: api-proxy
+          ref: authToken
+          token: ${{ secrets.API_PROXY_PAT }}
+
+      - name: Install dependencies for api-proxy
+        uses: actions/setup-node@v3
+        with:
+          node-version: 16
+          cache: 'yarn'
+      - run: yarn install
+        working-directory: ./api-proxy
+
+      - name: Start api-proxy
+        run: yarn start &
+        working-directory: ./api-proxy
+
+      - name: Build UI
+        uses: actions/setup-node@v3
+        with:
+          node-version: 16
+          cache: 'yarn'
+      - run: yarn install
+      - run: yarn build
+        env:
+          NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL}}
+          NEXT_PUBLIC_ENVIRONMENT_NAME: ${{ vars.NEXT_PUBLIC_ENVIRONMENT_NAME}}
+          NEXT_PUBLIC_FIREBASE_APP_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_APP_ID}}
+          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ vars.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN}}
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_PROJECT_ID}}
+          NEXT_PUBLIC_JIRA_CLIENT_ID: ${{ vars.NEXT_PUBLIC_JIRA_CLIENT_ID}}
+          PORT: ${{ vars.PORT}}
+          SLACK_CLIENT_ID: ${{ vars.SLACK_CLIENT_ID}}
+
+      - run: yarn start -p 8080 &
+
+      - name: Add Google Creds
+        uses: sergeysova/jq-action@v2
+        with:
+          cmd: jq -n '${{ secrets.GOOGLE_CREDENTIALS }}' > $HOME/google-creds.json
+
+      - name: Cypress run
+        uses: actions/setup-node@v3
+        with:
+          node-version: 16
+          cache: 'yarn'
+      - run: |
+          cd automation
+          yarn install
+          GOOGLE_APPLICATION_CREDENTIALS=$HOME/google-creds.json CYPRESS_TEST_UID=${{ vars.CYPRESS_TEST_UID }} CYPRESS_apiKey=${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }} CYPRESS_appId=${{ vars.NEXT_PUBLIC_FIREBASE_APP_ID }} CYPRESS_authDomain=${{ vars.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN }} CYPRESS_projectId=${{ vars.NEXT_PUBLIC_FIREBASE_PROJECT_ID }} yarn test
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: cypress-videos
+          path: automation/cypress/videos/
+
